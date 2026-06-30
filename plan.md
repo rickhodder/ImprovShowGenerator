@@ -119,40 +119,56 @@ An application that generates improv show schedules by intelligently assigning p
 
 ## User Interface Requirements
 
+### Workflow
+1. **Load Data**: GUI fetches players and games from local data store (JSON files)
+2. **Select**: User selects which games and players for the show
+3. **Configure**: User sets generation options (max downtime, strategy, etc.)
+4. **Generate**: GUI sends request to generation API endpoint
+5. **Review**: Display generated assignments in spreadsheet format
+6. **Edit**: Allow manual adjustments
+7. **Save**: Store final show to data store
+
 ### Input Section
 1. **Player Management**:
+   - Load players from data store
    - Add/remove players
    - Import from file (CSV/JSON)
    - Edit player details
+   - Select which players are in this show
    
 2. **Game Library**:
-   - Browse available games
+   - Browse available games from data store
    - Filter by difficulty, number of players
    - Add custom games
+   - Select which games for this show
    
 3. **Show Configuration**:
-   - Select games for show
+   - Show title and date
    - Set max consecutive games off threshold
-   - Set show duration/game count
+   - Choose optimization strategy
+   - Set other generation options
 
 ### Generation Section
 - "Generate Show" button
-- Configuration options:
-  - Randomization seed (for reproducibility)
-  - Weighting preferences (equal distribution vs. minimize downtime)
+- Sends API request with selected players, games, and config
+- Loading indicator during generation
+- Display generation metrics and warnings
+- Option to regenerate with different seed/settings
   
 ### Output Section
-- Interactive grid/table showing assignments
+- Interactive grid/table showing assignments (spreadsheet format)
 - Ability to:
   - Manually toggle player assignments
   - Drag to reorder games
   - Real-time validation updates
-  - Highlight issues
+  - Highlight issues (FIX status)
+  - View player totals and metrics
+- "Regenerate" vs "Manual Edit" modes
   
 ### Export Options
+- Save show to data store (JSON file)
 - Export to CSV/Excel
 - Export to printable program format
-- Save show configuration for later editing
 
 ## Program Generation (Future Feature)
 
@@ -172,13 +188,149 @@ An application that generates improv show schedules by intelligently assigning p
    - Customizable templates
    - PDF export
 
+## Architecture
+
+### API-First Design (Stateless Generation)
+
+**Core Principle**: The show generation logic is a stateless API endpoint that receives all required data in the request.
+
+**Benefits**:
+- Clean separation of concerns (data management vs. generation logic)
+- Scalable and cacheable
+- Testable in isolation
+- Can be deployed independently
+- Could be reused by multiple clients (web, mobile, CLI)
+
+**Architecture Flow**:
+```
+GUI/Client → Fetch Games from Data Store
+           → Fetch Players from Data Store
+           → User Selects Games & Players
+           → Build Request Object
+           → POST /api/generate-show
+           → API generates schedule (no DB access)
+           → Returns generated assignments
+           → GUI displays and allows edits
+           → Save to Data Store when ready
+```
+
+### API Endpoint Design
+
+**Endpoint**: `POST /api/generate-show`
+
+**Request Body**:
+```json
+{
+  "players": [
+    {
+      "id": "player-1",
+      "firstName": "Jane",
+      "lastName": "Doe",
+      "experienceLevel": "Advanced"
+    }
+  ],
+  "games": [
+    {
+      "id": "game-1",
+      "name": "Alphabet",
+      "requiredPlayers": 2,
+      "difficultyLevel": "Easy",
+      "isGroupGame": false
+    }
+  ],
+  "config": {
+    "maxConsecutiveGamesOff": 2,
+    "optimizationStrategy": "balanced",
+    "allowPartialGames": false,
+    "seed": 12345
+  }
+}
+```
+
+**Configuration Options**:
+- `maxConsecutiveGamesOff`: integer (default: 2)
+- `optimizationStrategy`: "speed" | "balanced" | "optimal" (algorithm choice)
+- `allowPartialGames`: boolean (allow games with fewer than required players)
+- `seed`: integer (for reproducible randomization)
+- `prioritizeExperience`: boolean (assign less experienced players to easier games)
+- `balanceStrategy`: "equal-games" | "minimize-downtime" | "balanced"
+
+**Response Body**:
+```json
+{
+  "success": true,
+  "showAssignments": [
+    {
+      "order": 1,
+      "gameId": "game-1",
+      "gameName": "Alphabet",
+      "requiredPlayers": 2,
+      "assignedPlayerIds": ["player-1", "player-3"],
+      "isValid": true
+    }
+  ],
+  "metrics": {
+    "totalGames": 10,
+    "playerGameCounts": {
+      "player-1": 5,
+      "player-2": 4,
+      "player-3": 5
+    },
+    "maxConsecutiveOff": {
+      "player-1": 2,
+      "player-2": 1,
+      "player-3": 2
+    },
+    "averageGamesPerPlayer": 4.67,
+    "distributionVariance": 0.22
+  },
+  "warnings": [
+    "Player 'John Smith' has 3 consecutive games off (exceeds threshold of 2)"
+  ]
+}
+```
+
+**Error Response**:
+```json
+{
+  "success": false,
+  "error": "INSUFFICIENT_PLAYERS",
+  "message": "Cannot assign 5 players to a game requiring 6",
+  "details": {
+    "gameId": "game-3",
+    "required": 6,
+    "available": 5
+  }
+}
+```
+
+### Client-Side vs. Server-Side Generation
+
+**Option A: Server-Side API** (Recommended for complex optimization)
+- Node.js/Python/Java service
+- Can use OR-Tools or other heavy libraries
+- Better for complex constraint solving
+- Easier to update algorithm without client updates
+
+**Option B: Client-Side Only** (Simpler deployment)
+- Pure JavaScript/WASM in browser
+- No server required
+- Works offline
+- Faster (no network round-trip)
+- Good for greedy algorithm approach
+
+**Hybrid Approach** (Best of both):
+- Client-side greedy algorithm for instant results
+- Optional server-side optimization for better results
+- Fallback if server unavailable
+
 ## Technical Considerations
 
 ### Technology Stack Options
-- **Web App**: React/Vue + Node.js backend
-- **Desktop App**: Electron
+- **Web App**: React/Vue frontend + Node.js/Python API
+- **Desktop App**: Electron (API can run locally or remotely)
 - **Mobile**: React Native (future)
-- **Pure Web**: Client-side only (no backend needed)
+- **Pure Web**: Client-side only (generation in browser using JavaScript/WASM)
 
 ### Data Storage
 
@@ -406,9 +558,12 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 
 ### Phase 1: MVP (Minimum Viable Product)
 - [ ] Define data structures (JSON schemas)
+- [ ] Design API endpoint contract (request/response)
+- [ ] Implement stateless generation API endpoint
+- [ ] Implement basic player assignment algorithm (greedy approach)
 - [ ] Create data access layer abstraction (for future database migration)
 - [ ] Implement JSON file storage (players, games, shows)
-- [ ] Implement basic player assignment algorithm (greedy approach)
+- [ ] Build GUI for game/player selection
 - [ ] Create spreadsheet-like output format with TOTAL row
 - [ ] Manual assignment/editing capability
 - [ ] Basic validation (MATCH/FIX, player totals)
@@ -445,16 +600,19 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 
 1. **Platform**: Web, desktop, or mobile first?
 2. **Data Storage**: ✅ Start with JSON files, migrate to database later
-3. **Algorithm Complexity**: Custom greedy vs. constraint solver (OR-Tools)?
+3. **API Architecture**: ✅ Stateless generation endpoint (receives all data in request)
+4. **API Deployment**: Client-side (JavaScript/WASM) or server-side (Node.js/Python)?
+   - Start client-side for simplicity?
+   - Or server-side for better algorithms (OR-Tools)?
+5. **Algorithm Complexity**: Custom greedy vs. constraint solver (OR-Tools)?
    - MVP: Start with greedy, add solver later?
    - Or use OR-Tools from the start for better results?
-4. **User Experience**: How much automation vs. manual control?
-5. **Game Library**: Pre-populated or user-created?
-6. **Downtime Threshold**: Default value? Configurable per show or per player?
-7. **Experience Level**: Should it factor into game assignments?
-8. **Player Preferences**: Should players be able to mark preferred/avoided games?
-9. **Technology**: If using JavaScript, is WebAssembly (OR-Tools) acceptable for the bundle size?
-10. **Data Location**: Where should JSON files be stored? (User's Documents folder, app data folder, project folder?)
+6. **User Experience**: How much automation vs. manual control?
+7. **Game Library**: Pre-populated or user-created?
+8. **Downtime Threshold**: Default value? (Suggest: 2)
+9. **Experience Level**: Should it factor into game assignments?
+10. **Player Preferences**: Should players be able to mark preferred/avoided games?
+11. **Data Location**: Where should JSON files be stored? (User's Documents folder, app data folder, project folder?)
 
 ## Success Metrics
 
@@ -471,3 +629,6 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 - Consider both novice and expert user workflows
 - JSON files provide simplest starting point with clear database migration path
 - Data access layer abstraction from day one enables smooth future database migration
+- Stateless API design separates generation logic from data management
+- GUI orchestrates: fetch data → call API → display results → save if satisfied
+- Generation endpoint is pure function: same inputs = same outputs (with same seed)
