@@ -542,10 +542,22 @@ User/CLI → Call Service (e.g., showGeneratorService.generate())
 ## Technical Considerations
 
 ### Technology Stack Options
-- **Web App**: React/Vue frontend + Node.js/Python API
-- **Desktop App**: Electron (API can run locally or remotely)
-- **Mobile**: React Native (future)
-- **Pure Web**: Client-side only (generation in browser using JavaScript/WASM)
+
+**MVP (Service Layer - Phase 1)**: ✅
+- **Language**: C# (.NET)
+- **Testing**: xUnit or NUnit
+- **JSON Serialization**: System.Text.Json or Newtonsoft.Json
+- **No HTTP framework required** - pure business logic classes
+
+**Phase 2+ (Adding HTTP API)**:
+- **Web Framework**: ASP.NET Core (natural fit with C#)
+- **Desktop App**: WPF or Windows Forms
+- **Mobile**: MAUI (if adding mobile later)
+
+**Alternative considerations** (Phase 2+):
+- Could also expose services via gRPC or other transport
+- JavaScript/TypeScript version possible if cross-platform needed
+- Python version possible for data science workflows
 
 ### Data Storage
 
@@ -778,7 +790,52 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 ## Implementation Phases
 
 ### Phase 1: MVP (Minimum Viable Product - Service Layer)
-**Deliverable**: Reusable service classes with core business logic, fully unit tested
+**Deliverable**: Reusable C# service classes with core business logic, fully unit tested
+
+**Technology Stack**:
+- Language: C# (.NET 6+)
+- Testing Framework: xUnit
+- JSON: System.Text.Json
+- No HTTP framework (pure business logic)
+
+**Project Structure**:
+```
+ImprovShowGenerator/
+  ├── src/
+  │   └── ImprovShowGenerator/
+  │       ├── Services/
+  │       │   ├── ShowGeneratorService.cs
+  │       │   ├── ShowValidatorService.cs
+  │       │   └── WorksheetService.cs
+  │       ├── Models/
+  │       │   ├── Player.cs
+  │       │   ├── Game.cs
+  │       │   ├── Show.cs
+  │       │   ├── GenerateShowRequest.cs
+  │       │   ├── GenerateShowResponse.cs
+  │       │   └── ... (other DTOs)
+  │       ├── Utils/
+  │       │   ├── ShowGenerationAlgorithm.cs
+  │       │   └── FairnessCalculator.cs
+  │       └── Data/
+  │           ├── IDataStore.cs (interface)
+  │           └── JsonFileStore.cs (implementation)
+  ├── tests/
+  │   └── ImprovShowGenerator.Tests/
+  │       ├── Services/
+  │       │   ├── ShowGeneratorServiceTests.cs
+  │       │   ├── ShowValidatorServiceTests.cs
+  │       │   └── WorksheetServiceTests.cs
+  │       ├── Utils/
+  │       │   └── ShowGenerationAlgorithmTests.cs
+  │       └── TestFixtures/
+  │           └── SampleData.cs
+  ├── data/
+  │   ├── players.json
+  │   ├── games-library.json
+  │   └── shows/
+  └── ImprovShowGenerator.csproj
+```
 
 **Core Service Implementation**:
 - [ ] Define data structures and TypeScript types (Player, Game, Show, Request, Response models)
@@ -868,26 +925,25 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 ## Open Questions & Decisions Needed
 
 1. **MVP Scope**: ✅ Service Layer (no HTTP API, no GUI initially) - focus on reusable services with comprehensive unit tests
-2. **Data Storage**: ✅ Start with JSON files, migrate to database later
-3. **Data Location**: ✅ Project directory (for MVP)
-4. **API Architecture**: ✅ Stateless generation endpoint (receives all data in request)
-5. **Fixed-Order Games**: ✅ Games with `order: 999` locked to end position (e.g., group finale)
-6. **Overflow Games**: ✅ Automatically included only when they improve fairness (reduce distribution variance)
-7. **Randomization**: ✅ Each call generates randomly. Users refine by calling API with adjusted games list from previous output
+2. **MVP Language**: ✅ C# (.NET) - service layer implementation with xUnit tests
+3. **Data Storage**: ✅ Start with JSON files, migrate to database later
+4. **Data Location**: ✅ Project directory (for MVP)
+5. **Architecture**: ✅ Service Layer Pattern (Hexagonal Architecture)
+6. **Fixed-Order Games**: ✅ Games with `order: 999` locked to end position (e.g., group finale)
+7. **Overflow Games**: ✅ Automatically included only when they improve fairness (reduce distribution variance)
+8. **Randomization**: ✅ Each call generates randomly. Users refine by calling service with adjusted games list from previous output
    - Optional `seed` parameter for reproducible results during testing
-8. **Show Duration**: ⏳ Optional `duration` property on games (for future show length calculation, not MVP priority)
-9. **Conflict/Preference**: Deferred (not important for MVP) - add in Phase 3+
+9. **Show Duration**: ⏳ Optional `duration` property on games (for future show length calculation, not MVP priority)
+10. **Conflict/Preference**: Deferred (not important for MVP) - add in Phase 3+
 
 **Still to Decide**:
-10. **API Deployment**: Client-side (JavaScript/WASM) or server-side (Node.js/Python)?
-    - Start client-side for simplicity?
-    - Or server-side for better algorithms (OR-Tools)?
-11. **Algorithm Complexity**: Custom greedy vs. constraint solver (OR-Tools)?
+11. **Phase 2 HTTP Framework**: ASP.NET Core (natural fit with C#) or alternative?
+12. **Algorithm Complexity**: Custom greedy vs. constraint solver (OR-Tools)?
     - MVP: Start with greedy, add solver later?
     - Or use OR-Tools from the start for better results?
-12. **Downtime Threshold**: Default value? (Suggest: 2)
-13. **Experience Level**: Should it factor into game assignments?
-14. **Game Library**: Pre-populated or user-created?
+13. **Downtime Threshold**: Default value? (Suggest: 2)
+14. **Experience Level**: Should it factor into game assignments?
+15. **Game Library**: Pre-populated or user-created?
 
 ## Success Metrics
 
@@ -895,6 +951,8 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 - Assignment fairness: Standard deviation of games per player < 1
 - Downtime optimization: No player off > threshold (configurable, default 2-3 games)
 - User satisfaction: Reduces manual planning time by 80%+
+
+## Notes
 
 ## Notes
 
@@ -908,30 +966,34 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 - **Services are pure functions: same inputs = same outputs (with same seed)**
 - **Services can be called by HTTP API (Phase 2), CLI (optional), or GUI (Phase 3)**
 - **Each adapter (HTTP, CLI, GUI) is just a thin wrapper around services**
+- **C# MVP provides strong typing and excellent testing framework (xUnit)**
+- **ASP.NET Core Phase 2 will integrate seamlessly with C# services**
+- **.NET provides excellent cross-platform support (Windows, Linux, macOS)**
 
-## MVP Workflow (Service Layer Approach)
+## MVP Workflow (Service Layer Approach - C#)
 
 **Development Workflow**:
-1. Define request/response models as TypeScript interfaces
+1. Define request/response models as C# classes (POCOs)
 2. Implement `ShowGeneratorService`, `ShowValidatorService`, `WorksheetService` classes
-3. Write comprehensive unit tests for each service
-4. Call services directly in tests (no HTTP needed)
-5. Validate algorithm correctness through tests
+3. Write comprehensive xUnit tests for each service
+4. Call services directly in tests (no HTTP framework needed)
+5. Validate algorithm correctness through unit tests
 6. Update tests as requirements evolve
 
-**User Iteration Pattern** (Once Phase 2 HTTP API is added):
-1. User/Client calls `showGeneratorService.generate(request)` with players, games, config
-2. Service returns result with assignments and metrics
-3. User reviews the assignments and fairness metrics
-4. If unsatisfied, user adjusts game list/order and calls service again
+**Usage Pattern in Tests and Phase 2+**:
+1. Client/Code calls `showGeneratorService.Generate(request)` with players, games, config
+2. Service returns `GenerateShowResponse` with assignments and metrics
+3. Client reviews the assignments and fairness metrics
+4. If unsatisfied, client adjusts game list/order and calls service again
 5. Repeat until desired result achieved
 6. Save final show to data store via data access layer
 7. Later in Phase 3: GUI wraps these service calls
 
 **Key Design Points**:
-- Each API call is independent and stateless (all data in request body)
+- Each service call is independent and stateless (all data in request object)
 - Randomization makes each call produce different results (unless `seed` is provided)
-- Users control the show by adjusting the game list/order before each call
+- Service layer has no HTTP dependencies - pure C# business logic
 - Optional `seed` parameter enables reproducible results for testing/refinement
-- No GUI in MVP means users work directly with JSON files and API calls
-- Phase 3 will add a GUI to make this workflow more user-friendly
+- Strong typing with C# classes prevents runtime errors
+- Easy to test - simple unit tests without mocking HTTP layers
+- Phase 2 HTTP endpoints will be thin wrappers around these services
