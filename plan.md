@@ -24,6 +24,8 @@ An application that generates improv show schedules by intelligently assigning p
 - **description**: text
 - **difficultyLevel**: enum/string (e.g., "Easy", "Medium", "Hard")
 - **isGroupGame**: boolean (if true, requires all players in the show)
+- **order**: integer (optional, specifies fixed position in show; typically used for opening/closing games)
+- **duration**: integer (optional, duration in minutes; for future show length calculation)
 
 ### Show
 - **players**: array of Player objects
@@ -39,15 +41,24 @@ An application that generates improv show schedules by intelligently assigning p
 
 ## Show Generation Algorithm
 
-### Phase 1: Game Selection
+### Phase 1: Game Selection & Fixed-Order Handling
 1. Select games from available game library
-2. Determine if group games should be included
-3. Calculate total show length based on time/number of games
+2. **Lock fixed-order games**: Games with specified `order` property are locked to those positions
+   - Games with `order: 1, 2, 3...` are fixed to the beginning
+   - Games with `order: 999` (or high values) are fixed to the end
+   - Games without an `order` property are flexible and reordered as needed
+3. **Evaluate overflow games**: If main games don't achieve fair distribution, analyze overflow games to determine which (if any) improve fairness
+   - Calculate variance with current game set
+   - Test each overflow game to see variance impact
+   - Include only overflow games that reduce variance (improve fairness)
+   - Example: If 2 players need 1 more game and overflow has a 2-player game, include just that one; don't add a 3-player game that would make distribution worse
+4. Calculate total show length based on locked + flexible + selected overflow games
 
 ### Phase 2: Player Assignment Algorithm
-**Input**: List of selected games, list of players
+**Input**: List of selected games (including any overflow games chosen), list of players
 
 **Constraints**:
+- Games with fixed `order` property must appear at specified positions
 - Each game must have exactly the required number of players
 - Minimize variance in total games per player
 - Minimize consecutive games a player is offstage
@@ -201,18 +212,23 @@ An application that generates improv show schedules by intelligently assigning p
 - Can be deployed independently
 - Could be reused by multiple clients (web, mobile, CLI)
 
-**Architecture Flow**:
+**Architecture Flow** (MVP - API First):
 ```
-GUI/Client → Fetch Games from Data Store
-           → Fetch Players from Data Store
-           → User Selects Games & Players
-           → Build Request Object
-           → POST /api/generate-show
-           → API generates schedule (no DB access)
-           → Returns generated assignments
-           → GUI displays and allows edits
-           → Save to Data Store when ready
+Client/User → Prepare request JSON with players, games, config
+            → POST /api/generate-show
+            → API generates schedule with random assignments
+            → Returns generated assignments + metrics
+            → User refines: adjust games/order from output
+            → Call /api/generate-show again with refined games
+            → Repeat until satisfied
+            → Save to Data Store manually or via /api/save-show
 ```
+
+**Workflow**: Users can refine shows iteratively by:
+1. Making a request to generate a show
+2. Reviewing the output assignments
+3. Adjusting the game list/order and calling the API again
+4. Repeating until desired result achieved
 
 ### API Endpoint Design
 
@@ -235,7 +251,28 @@ GUI/Client → Fetch Games from Data Store
       "name": "Alphabet",
       "requiredPlayers": 2,
       "difficultyLevel": "Easy",
-      "isGroupGame": false
+      "isGroupGame": false,
+      "order": null,
+      "duration": 5
+    },
+    {
+      "id": "game-2",
+      "name": "Group Finale",
+      "requiredPlayers": 5,
+      "difficultyLevel": "Easy",
+      "isGroupGame": true,
+      "order": 999,
+      "duration": 10
+    }
+  ],
+  "overflowGames": [
+    {
+      "id": "game-3",
+      "name": "Improv Backlog",
+      "requiredPlayers": 2,
+      "difficultyLevel": "Medium",
+      "isGroupGame": false,
+      "duration": 5
     }
   ],
   "config": {
@@ -251,7 +288,7 @@ GUI/Client → Fetch Games from Data Store
 - `maxConsecutiveGamesOff`: integer (default: 2)
 - `optimizationStrategy`: "speed" | "balanced" | "optimal" (algorithm choice)
 - `allowPartialGames`: boolean (allow games with fewer than required players)
-- `seed`: integer (for reproducible randomization)
+- `seed`: integer (optional, for reproducible randomization; if omitted, generates randomly each call)
 - `prioritizeExperience`: boolean (assign less experienced players to easier games)
 - `balanceStrategy`: "equal-games" | "minimize-downtime" | "balanced"
 
@@ -304,6 +341,172 @@ GUI/Client → Fetch Games from Data Store
 }
 ```
 
+### Show Validation Endpoint
+
+**Endpoint**: `POST /api/validate-show`
+
+**Purpose**: Analyze a proposed show configuration before generation to provide feedback and suggestions for improvement.
+
+**Request Body** (same structure as `/api/generate-show`):
+```json
+{
+  "players": [...],
+  "games": [...],
+  "overflowGames": [...],
+  "config": {...}
+}
+```
+
+**Response Body**:
+```json
+{
+  "success": true,
+  "isBalanced": false,
+  "analysis": {
+    "totalGameSlots": 12,
+    "playerCount": 5,
+    "slotsPerPlayer": 2.4,
+    "targetSlotsPerPlayer": 2,
+    "playersWithLessGames": ["player-1", "player-4"],
+    "playersWithMoreGames": ["player-2", "player-3"],
+    "gamesPerPlayerDistribution": {
+      "player-1": 2,
+      "player-2": 3,
+      "player-3": 3,
+      "player-4": 2,
+      "player-5": 2
+    }
+  },
+  "suggestions": [
+    {
+      "type": "IMBALANCED_DISTRIBUTION",
+      "severity": "warning",
+      "message": "2 players will have fewer games than others",
+      "detail": "Players player-1 and player-4 will have 2 games while player-2 and player-3 will have 3 games. Standard deviation: 0.49",
+      "recommendation": "Add a 2-player game to the game list to give those players one more slot. This will result in all players having equal games."
+    },
+    {
+      "type": "OVERFLOW_CAN_FIX",
+      "severity": "info",
+      "message": "Overflow games can fix this imbalance",
+      "detail": "Overflow game 'Backlog Game 1' (2-player) will perfectly balance all players. Adding it will give all players exactly 3 games.",
+      "recommendation": "When you call /api/generate-show, the overflow game will be automatically included to achieve perfect balance."
+    },
+    {
+      "type": "CONSTRAINTS_MET",
+      "severity": "info",
+      "message": "All hard constraints are satisfied",
+      "detail": "Enough total player slots for the player count. No games exceed available players."
+    }
+  ],
+  "warnings": [],
+  "overflow_impact_analysis": [
+    {
+      "gameId": "overflow-game-1",
+      "gameName": "Quick Pair Game",
+      "requiredPlayers": 2,
+      "currentVariance": 0.49,
+      "varianceIfAdded": 0,
+      "shouldInclude": true,
+      "reason": "Eliminates imbalance. All players will have exactly 3 games."
+    },
+    {
+      "gameId": "overflow-game-2",
+      "gameName": "Group Activity",
+      "requiredPlayers": 3,
+      "currentVariance": 0.49,
+      "varianceIfAdded": 0.71,
+      "shouldInclude": false,
+      "reason": "Would make distribution worse. Not recommended."
+    }
+  ],
+  "gamesForGeneration": [
+    "game-1", "game-2", "game-3", "overflow-game-1"
+  ]
+}
+```
+
+**Validation Checks**:
+1. **Hard Constraints**:
+   - Sufficient total player slots for all players
+   - No game requires more players than available
+   - Fixed-order games don't conflict (enough players for fixed games)
+
+2. **Soft Constraints**:
+   - Distribution fairness (standard deviation of games per player)
+   - All players have at least 1 game
+   - Downtime threshold can be met
+
+3. **Overflow Game Suggestions**:
+   - Analyze which overflow games (if any) would improve fairness
+   - Calculate the impact of adding each overflow game on distribution variance
+   - Recommend only the minimal set of overflow games needed to achieve better fairness
+   - Example: If 2 players need 1 more game, suggest the single overflow game that requires 2 players, not additional games
+
+---
+
+### Create Blank Worksheet Endpoint
+
+**Endpoint**: `POST /api/create-worksheet`
+
+**Purpose**: Generate a blank spreadsheet-like worksheet with games and players pre-populated, but no player assignments. Users can print this and manually fill in the assignments.
+
+**Request Body** (same structure as `/api/generate-show`):
+```json
+{
+  "players": [...],
+  "games": [...],
+  "config": {...}
+}
+```
+
+**Response Body**:
+```json
+{
+  "success": true,
+  "worksheet": {
+    "columns": ["Order", "Game Name", "Required Players", "Player 1", "Player 2", "Player 3", "Player 4", "Player 5", "Player Count", "Status"],
+    "rows": [
+      {
+        "order": 1,
+        "gameName": "Alphabet",
+        "requiredPlayers": 2,
+        "assignments": [0, 0, 0, 0, 0],
+        "playerCount": 0,
+        "status": "blank"
+      },
+      {
+        "order": 2,
+        "gameName": "Three Headed Expert",
+        "requiredPlayers": 3,
+        "assignments": [0, 0, 0, 0, 0],
+        "playerCount": 0,
+        "status": "blank"
+      }
+    ],
+    "totalsRow": {
+      "label": "TOTAL",
+      "totals": [0, 0, 0, 0, 0],
+      "playerNames": ["Jane Doe", "John Smith", "Alice Johnson", "Bob Williams", "Carol Davis"]
+    }
+  },
+  "metrics": {
+    "totalGames": 2,
+    "playerCount": 5,
+    "targetSlotsPerPlayer": 2,
+    "note": "Blank worksheet - user should aim for approximately equal assignments per player"
+  }
+}
+```
+
+**Use Case**:
+- User wants to generate a printable blank form
+- User manually assigns players to games by marking 1 or 0
+- Can be used as a worksheet for a meeting where decisions are made collaboratively
+- Output can be exported to CSV/Excel for printing
+
+---
+
 ### Client-Side vs. Server-Side Generation
 
 **Option A: Server-Side API** (Recommended for complex optimization)
@@ -343,15 +546,20 @@ GUI/Client → Fetch Games from Data Store
 - No dependencies or setup required
 - Perfect for single-user desktop/web app
 
-**Structure**:
+**Structure** (MVP - project directory):
 ```
-data/
-  ├── players.json          # Array of all player objects
-  ├── games-library.json    # Array of all available games
-  └── shows/
-      ├── show-2026-06-29.json    # Individual show files
-      ├── show-2026-07-15.json
-      └── ...
+project-root/
+  ├── data/
+  │   ├── players.json          # Array of all player objects
+  │   ├── games-library.json    # Array of all available games
+  │   └── shows/
+  │       ├── show-2026-06-29.json    # Individual show files
+  │       ├── show-2026-07-15.json
+  │       └── ...
+  ├── src/
+  │   └── api/
+  │       └── generate-show.js   # API implementation
+  └── package.json
 ```
 
 **File Schemas**:
@@ -475,13 +683,14 @@ data/
 
 #### Recommendation for MVP
 
-**Start with JSON files** because:
+**Start with JSON files in project directory** because:
 1. Zero setup - works immediately
 2. Easy to understand and debug
 3. Can inspect/edit files manually if needed
 4. Version control friendly for development
 5. Clean migration path to database when needed
-6. Your instinct is correct! 
+6. Project directory keeps everything self-contained for MVP
+7. Easy to share/test configurations 
 
 **When to migrate to database**:
 - Need multi-user access
@@ -556,20 +765,33 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 
 ## Implementation Phases
 
-### Phase 1: MVP (Minimum Viable Product)
-- [ ] Define data structures (JSON schemas)
-- [ ] Design API endpoint contract (request/response)
-- [ ] Implement stateless generation API endpoint
-- [ ] Implement basic player assignment algorithm (greedy approach)
-- [ ] Create data access layer abstraction (for future database migration)
-- [ ] Implement JSON file storage (players, games, shows)
-- [ ] Build GUI for game/player selection
-- [ ] Create spreadsheet-like output format with TOTAL row
-- [ ] Manual assignment/editing capability
-- [ ] Basic validation (MATCH/FIX, player totals)
-- [ ] File I/O for saving/loading shows
+### Phase 1: MVP (Minimum Viable Product - API Only)
+**Deliverable**: Stateless REST API that generates improv show schedules
 
-### Phase 2: Enhanced Algorithm
+Core API Implementation:
+- [ ] Define data structures and JSON schemas
+- [ ] Design API endpoint contracts (request/response)
+- [ ] Implement `/api/generate-show` endpoint (stateless, no DB access)
+- [ ] Implement `/api/validate-show` endpoint (feedback before generation)
+- [ ] Implement `/api/create-worksheet` endpoint (blank spreadsheet for manual assignment)
+- [ ] Implement basic player assignment algorithm (greedy approach)
+- [ ] Handle fixed-order games (games with specified `order` property)
+- [ ] Implement overflow games logic (automatically include only when they improve fairness)
+- [ ] Support optional `seed` parameter for reproducible results
+
+Data Management:
+- [ ] Create data access layer abstraction (for future database migration)
+- [ ] Implement JSON file storage in project directory (players, games, shows)
+- [ ] File I/O for loading players/games and saving generated shows
+- [ ] Sample/fixture data files for testing
+
+Testing & Validation:
+- [ ] Validate hard constraints (enough players, game requirements met)
+- [ ] Calculate fairness metrics (distribution variance, consecutive downtime)
+- [ ] Generate appropriate warnings/suggestions
+- [ ] API endpoint documentation/examples
+
+### Phase 2: Enhanced Algorithm & Performance
 - [ ] Evaluate constraint solver integration (OR-Tools or similar)
 - [ ] Implement downtime minimization
 - [ ] Add reordering optimization
@@ -577,42 +799,56 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 - [ ] Performance metrics display
 - [ ] Algorithm comparison/benchmarking
 
-### Phase 3: User Interface
-- [ ] Game library management
-- [ ] Player database
-- [ ] Interactive show editor
-- [ ] Visual feedback and highlighting
+### Phase 3: GUI & User Interface
+- [ ] Build GUI to call API (web or desktop)
+- [ ] Game library management interface
+- [ ] Player database interface
+- [ ] Interactive show editor (spreadsheet-like grid)
+- [ ] Validation feedback UI (show suggestions before generation)
+- [ ] Manual assignment/editing capability (toggle player assignments, drag to reorder)
+- [ ] Real-time validation updates with MATCH/FIX indicators
+- [ ] Player totals and fairness metrics display
+- [ ] "Regenerate" vs "Manual Edit" modes
 
 ### Phase 4: Export & Program Generation
-- [ ] CSV/Excel export
+- [ ] CSV/Excel export functionality
+- [ ] Save/load show configurations
 - [ ] Program template system
-- [ ] PDF generation with bios
+- [ ] PDF generation with player bios
 - [ ] Customizable formatting
 
 ### Phase 5: Advanced Features
-- [ ] Save/load show configurations
-- [ ] History and versioning
+- [ ] Player preferences and conflicts (mark avoided/preferred games)
+- [ ] Experience level factoring into assignments
+- [ ] History and versioning (track changes to shows)
 - [ ] Templates for common show formats
 - [ ] Analytics (player participation over multiple shows)
-- [ ] Constraint customization (e.g., player preferences, conflicts)
+- [ ] Custom constraint support (e.g., max appearances, skill-based grouping)
+- [ ] Multi-show analysis and reporting
 
 ## Open Questions & Decisions Needed
 
-1. **Platform**: Web, desktop, or mobile first?
+1. **MVP Scope**: ✅ API only (no GUI initially) - users call API directly with request JSON
 2. **Data Storage**: ✅ Start with JSON files, migrate to database later
-3. **API Architecture**: ✅ Stateless generation endpoint (receives all data in request)
-4. **API Deployment**: Client-side (JavaScript/WASM) or server-side (Node.js/Python)?
-   - Start client-side for simplicity?
-   - Or server-side for better algorithms (OR-Tools)?
-5. **Algorithm Complexity**: Custom greedy vs. constraint solver (OR-Tools)?
-   - MVP: Start with greedy, add solver later?
-   - Or use OR-Tools from the start for better results?
-6. **User Experience**: How much automation vs. manual control?
-7. **Game Library**: Pre-populated or user-created?
-8. **Downtime Threshold**: Default value? (Suggest: 2)
-9. **Experience Level**: Should it factor into game assignments?
-10. **Player Preferences**: Should players be able to mark preferred/avoided games?
-11. **Data Location**: Where should JSON files be stored? (User's Documents folder, app data folder, project folder?)
+3. **Data Location**: ✅ Project directory (for MVP)
+4. **API Architecture**: ✅ Stateless generation endpoint (receives all data in request)
+5. **Fixed-Order Games**: ✅ Games with `order: 999` locked to end position (e.g., group finale)
+6. **Overflow Games**: ✅ Automatically included only when they improve fairness (reduce distribution variance)
+7. **Randomization**: ✅ Each call generates randomly. Users refine by calling API with adjusted games list from previous output
+   - Optional `seed` parameter for reproducible results during testing
+8. **Show Duration**: ⏳ Optional `duration` property on games (for future show length calculation, not MVP priority)
+9. **Conflict/Preference**: Deferred (not important for MVP) - add in Phase 3+
+
+**Still to Decide**:
+10. **API Deployment**: Client-side (JavaScript/WASM) or server-side (Node.js/Python)?
+    - Start client-side for simplicity?
+    - Or server-side for better algorithms (OR-Tools)?
+11. **Algorithm Complexity**: Custom greedy vs. constraint solver (OR-Tools)?
+    - MVP: Start with greedy, add solver later?
+    - Or use OR-Tools from the start for better results?
+12. **Downtime Threshold**: Default value? (Suggest: 2)
+13. **Experience Level**: Should it factor into game assignments?
+14. **Game Library**: Pre-populated or user-created?
 
 ## Success Metrics
 
@@ -630,5 +866,24 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 - JSON files provide simplest starting point with clear database migration path
 - Data access layer abstraction from day one enables smooth future database migration
 - Stateless API design separates generation logic from data management
-- GUI orchestrates: fetch data → call API → display results → save if satisfied
 - Generation endpoint is pure function: same inputs = same outputs (with same seed)
+
+## MVP Workflow (API-First Approach)
+
+**User Iteration Pattern**:
+1. User prepares request JSON with players, games (in desired order), and config
+2. POST `/api/validate-show` → Get analysis and suggestions
+3. User adjusts games/order based on validation feedback
+4. POST `/api/generate-show` → Get random player assignments
+5. User reviews the output assignments and metrics
+6. If unsatisfied, user adjusts the game list/order and calls `/api/generate-show` again
+7. Repeat until desired result achieved
+8. Save final show to data store
+
+**Key Design Points**:
+- Each API call is independent and stateless (all data in request body)
+- Randomization makes each call produce different results (unless `seed` is provided)
+- Users control the show by adjusting the game list/order before each call
+- Optional `seed` parameter enables reproducible results for testing/refinement
+- No GUI in MVP means users work directly with JSON files and API calls
+- Phase 3 will add a GUI to make this workflow more user-friendly
