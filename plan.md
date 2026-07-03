@@ -201,33 +201,45 @@ An application that generates improv show schedules by intelligently assigning p
 
 ## Architecture
 
-### API-First Design (Stateless Generation)
+### Service Layer Design (Hexagonal Architecture)
 
-**Core Principle**: The show generation logic is a stateless API endpoint that receives all required data in the request.
+**Core Principle**: Build reusable service classes with core business logic, then add adapters (HTTP API, CLI, GUI) around them. Services receive/return plain data objects - no framework dependencies.
 
 **Benefits**:
-- Clean separation of concerns (data management vs. generation logic)
-- Scalable and cacheable
-- Testable in isolation
-- Can be deployed independently
-- Could be reused by multiple clients (web, mobile, CLI)
+- Pure business logic separate from transport layer (HTTP, CLI, GUI)
+- Easy to unit test without web framework complexity
+- Reusable as a library in other projects
+- Multiple interfaces (API, CLI, GUI) can all use same services
+- Fast MVP without HTTP framework overhead
 
-**Architecture Flow** (MVP - API First):
+**Architecture Flow** (Service Layer First):
 ```
-Client/User → Prepare request JSON with players, games, config
-            → POST /api/generate-show
-            → API generates schedule with random assignments
-            → Returns generated assignments + metrics
-            → User refines: adjust games/order from output
-            → Call /api/generate-show again with refined games
-            → Repeat until satisfied
-            → Save to Data Store manually or via /api/save-show
+Core Services (business logic)
+  ├── ShowGeneratorService
+  ├── ShowValidatorService
+  └── WorksheetService
+       ↓
+Can be called by multiple adapters:
+  ├── Direct calls (testing, CLI)
+  ├── HTTP API adapter (Phase 2)
+  ├── CLI adapter (Phase 1 optional)
+  └── GUI adapter (Phase 3)
+
+MVP Workflow:
+User/CLI → Call Service (e.g., showGeneratorService.generate())
+        → Service receives request object
+        → Service returns response object
+        → Service has no knowledge of HTTP/GUI/CLI
+        → In Phase 2: HTTP endpoint becomes thin wrapper around service
 ```
 
 **Workflow**: Users can refine shows iteratively by:
-1. Making a request to generate a show
-2. Reviewing the output assignments
-3. Adjusting the game list/order and calling the API again
+1. Calling `showGeneratorService.generate(request)` with players and games
+2. Reviewing the output assignments and metrics
+3. Adjusting the game list/order in the request object
+4. Calling service again with refined request
+5. Repeat until satisfied
+6. Store final show via data access layer
 4. Repeating until desired result achieved
 
 ### API Endpoint Design
@@ -765,42 +777,69 @@ The player assignment problem is a **constraint satisfaction problem (CSP)** wit
 
 ## Implementation Phases
 
-### Phase 1: MVP (Minimum Viable Product - API Only)
-**Deliverable**: Stateless REST API that generates improv show schedules
+### Phase 1: MVP (Minimum Viable Product - Service Layer)
+**Deliverable**: Reusable service classes with core business logic, fully unit tested
 
-Core API Implementation:
-- [ ] Define data structures and JSON schemas
-- [ ] Design API endpoint contracts (request/response)
-- [ ] Implement `/api/generate-show` endpoint (stateless, no DB access)
-- [ ] Implement `/api/validate-show` endpoint (feedback before generation)
-- [ ] Implement `/api/create-worksheet` endpoint (blank spreadsheet for manual assignment)
-- [ ] Implement basic player assignment algorithm (greedy approach)
-- [ ] Handle fixed-order games (games with specified `order` property)
-- [ ] Implement overflow games logic (automatically include only when they improve fairness)
-- [ ] Support optional `seed` parameter for reproducible results
+**Core Service Implementation**:
+- [ ] Define data structures and TypeScript types (Player, Game, Show, Request, Response models)
+- [ ] Design service interfaces matching the proposed endpoint contracts
+- [ ] Implement `ShowGeneratorService` class
+  - [ ] `generate(request)` method - stateless show generation
+  - [ ] Player assignment algorithm (greedy approach)
+  - [ ] Handle fixed-order games
+  - [ ] Implement overflow games logic
+  - [ ] Support optional `seed` parameter for reproducible results
+- [ ] Implement `ShowValidatorService` class
+  - [ ] `validate(request)` method - pre-generation analysis
+  - [ ] Hard constraint validation
+  - [ ] Fairness metrics calculation
+  - [ ] Overflow game impact analysis
+- [ ] Implement `WorksheetService` class
+  - [ ] `createWorksheet(request)` method - blank spreadsheet generation
 
-Data Management:
-- [ ] Create data access layer abstraction (for future database migration)
-- [ ] Implement JSON file storage in project directory (players, games, shows)
-- [ ] File I/O for loading players/games and saving generated shows
+**Data Management**:
+- [ ] Create data access layer abstraction (generic interface for storage implementations)
+- [ ] Implement JSON file storage adapter in project directory (players, games, shows)
+- [ ] File I/O utilities for loading/saving data
 - [ ] Sample/fixture data files for testing
 
-Testing & Validation:
-- [ ] Validate hard constraints (enough players, game requirements met)
-- [ ] Calculate fairness metrics (distribution variance, consecutive downtime)
-- [ ] Generate appropriate warnings/suggestions
-- [ ] API endpoint documentation/examples
+**Comprehensive Testing**:
+- [ ] Unit tests for `ShowGeneratorService` (distribution fairness, algorithm correctness)
+- [ ] Unit tests for `ShowValidatorService` (constraint checking, metrics)
+- [ ] Unit tests for `WorksheetService` (blank worksheet generation)
+- [ ] Unit tests for overflow games logic
+- [ ] Unit tests for fixed-order games handling
+- [ ] Unit tests for edge cases and error handling
+- [ ] Test fixtures and sample data scenarios
+- [ ] Test coverage target: > 80% of service logic
 
-### Phase 2: Enhanced Algorithm & Performance
+**Documentation**:
+- [ ] Service interfaces documented with JSDoc/TypeDoc
+- [ ] Request/response schemas documented
+- [ ] Usage examples showing how to call services
+- [ ] Architecture documentation (hexagonal pattern explanation)
+
+### Phase 2: HTTP API & Algorithm Enhancement
+**Deliverable**: REST API wrapping services + improved algorithm options
+
+**HTTP API Implementation**:
+- [ ] Setup web framework (Express, Fastify, or similar)
+- [ ] Implement `/api/generate-show` endpoint (wraps `ShowGeneratorService.generate()`)
+- [ ] Implement `/api/validate-show` endpoint (wraps `ShowValidatorService.validate()`)
+- [ ] Implement `/api/create-worksheet` endpoint (wraps `WorksheetService.createWorksheet()`)
+- [ ] HTTP error handling and validation
+- [ ] API documentation (Swagger/OpenAPI)
+
+**Enhanced Algorithm**:
 - [ ] Evaluate constraint solver integration (OR-Tools or similar)
 - [ ] Implement downtime minimization
 - [ ] Add reordering optimization
 - [ ] Multiple algorithm strategies (user can choose)
-- [ ] Performance metrics display
-- [ ] Algorithm comparison/benchmarking
+- [ ] Performance metrics and benchmarking
+- [ ] Algorithm comparison testing
 
 ### Phase 3: GUI & User Interface
-- [ ] Build GUI to call API (web or desktop)
+- [ ] Build GUI to call services (web or desktop)
 - [ ] Game library management interface
 - [ ] Player database interface
 - [ ] Interactive show editor (spreadsheet-like grid)
@@ -828,7 +867,7 @@ Testing & Validation:
 
 ## Open Questions & Decisions Needed
 
-1. **MVP Scope**: ✅ API only (no GUI initially) - users call API directly with request JSON
+1. **MVP Scope**: ✅ Service Layer (no HTTP API, no GUI initially) - focus on reusable services with comprehensive unit tests
 2. **Data Storage**: ✅ Start with JSON files, migrate to database later
 3. **Data Location**: ✅ Project directory (for MVP)
 4. **API Architecture**: ✅ Stateless generation endpoint (receives all data in request)
@@ -865,20 +904,29 @@ Testing & Validation:
 - Consider both novice and expert user workflows
 - JSON files provide simplest starting point with clear database migration path
 - Data access layer abstraction from day one enables smooth future database migration
-- Stateless API design separates generation logic from data management
-- Generation endpoint is pure function: same inputs = same outputs (with same seed)
+- **Service layer design enables testing without web framework complexity**
+- **Services are pure functions: same inputs = same outputs (with same seed)**
+- **Services can be called by HTTP API (Phase 2), CLI (optional), or GUI (Phase 3)**
+- **Each adapter (HTTP, CLI, GUI) is just a thin wrapper around services**
 
-## MVP Workflow (API-First Approach)
+## MVP Workflow (Service Layer Approach)
 
-**User Iteration Pattern**:
-1. User prepares request JSON with players, games (in desired order), and config
-2. POST `/api/validate-show` → Get analysis and suggestions
-3. User adjusts games/order based on validation feedback
-4. POST `/api/generate-show` → Get random player assignments
-5. User reviews the output assignments and metrics
-6. If unsatisfied, user adjusts the game list/order and calls `/api/generate-show` again
-7. Repeat until desired result achieved
-8. Save final show to data store
+**Development Workflow**:
+1. Define request/response models as TypeScript interfaces
+2. Implement `ShowGeneratorService`, `ShowValidatorService`, `WorksheetService` classes
+3. Write comprehensive unit tests for each service
+4. Call services directly in tests (no HTTP needed)
+5. Validate algorithm correctness through tests
+6. Update tests as requirements evolve
+
+**User Iteration Pattern** (Once Phase 2 HTTP API is added):
+1. User/Client calls `showGeneratorService.generate(request)` with players, games, config
+2. Service returns result with assignments and metrics
+3. User reviews the assignments and fairness metrics
+4. If unsatisfied, user adjusts game list/order and calls service again
+5. Repeat until desired result achieved
+6. Save final show to data store via data access layer
+7. Later in Phase 3: GUI wraps these service calls
 
 **Key Design Points**:
 - Each API call is independent and stateless (all data in request body)
