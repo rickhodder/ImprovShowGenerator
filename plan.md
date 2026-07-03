@@ -838,7 +838,7 @@ ImprovShowGenerator/
 ```
 
 **Core Service Implementation**:
-- [ ] Define data structures and TypeScript types (Player, Game, Show, Request, Response models)
+- [ ] Define data structures as C# classes (Player, Game, Show, Request, Response models - POCOs)
 - [ ] Design service interfaces matching the proposed endpoint contracts
 - [ ] Implement `ShowGeneratorService` class
   - [ ] `generate(request)` method - stateless show generation
@@ -871,10 +871,11 @@ ImprovShowGenerator/
 - [ ] Test coverage target: > 80% of service logic
 
 **Documentation**:
-- [ ] Service interfaces documented with JSDoc/TypeDoc
-- [ ] Request/response schemas documented
-- [ ] Usage examples showing how to call services
-- [ ] Architecture documentation (hexagonal pattern explanation)
+- [ ] Service interfaces documented with XML documentation comments (`///`)
+- [ ] Request/response schemas documented (C# types and serialization)
+- [ ] Usage examples showing how to call services (C# code examples)
+- [ ] Architecture documentation (Hexagonal Architecture pattern explanation)
+- [ ] Optional: Generate HTML docs with Sandcastle or DocFX
 
 ### Phase 2: HTTP API & Algorithm Enhancement
 **Deliverable**: REST API wrapping services + improved algorithm options
